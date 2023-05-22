@@ -67,7 +67,13 @@ private:
     deque<int> load_store_queue; // indices of load_store instructions issue
     queue<SystemState> BNE_states; //Saving system states before knowing BNE
     int pc = 0; 
-    int cycle = 1;
+    int cycle;
+    bool tutorial_mode;
+
+    // final calculations
+    int num_bne;
+    int misprediction; 
+    int wb_insts;
 
     void issue() {
         for (auto &s: stations[program[pc].categ]) {
@@ -76,8 +82,12 @@ private:
                 s.busy = 1;
                 s.addr = program[pc].imm;
                 s.op = program[pc].op;
+                cout << s.cycles_per_addr << endl;
+                cout << s.cycles_per_exec << endl;
+
                 s.rem_cycles_addr = s.cycles_per_addr;
                 s.rem_cycles_exec = s.cycles_per_exec;
+                
                 //s.inst_index = running_instructions.size();
                 s.inst_index = pc;
                 if (register_stat[program[pc].rs] != 0) 
@@ -105,6 +115,7 @@ private:
                 
                 if(program[pc].categ == BNE){
                     BNE_states.push(SystemState(cycle, register_stat));
+                    num_bne++; 
                 }
                // running_instructions.push_back(&program[pc]);
                 pc += 1;
@@ -123,6 +134,9 @@ private:
         else if (category == JUMP){
             if (station.op == JAL){
                 station.result = station.inst_index + 1;
+            }
+            else{
+                station.result = station.vj;
             }       
         }
         else if(category == ADDITION){
@@ -145,21 +159,23 @@ private:
     }
 
     void execute(){
-
         // Non-Load and Non-Store stations
         for(int i = 2; i < NStationTypes; i++) {
             for (auto &s: stations[i]){
-                if(s.busy && program[s.inst_index].issue < cycle){
+                if(s.busy && program[s.inst_index].issue < cycle) {
                     if (!BNE_states.empty() && program[s.inst_index].issue > BNE_states.front().issue) 
                         continue;  // No execution for those after BNE until BNE writes back. 
-                    if(s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle) {
-                        if(s.rem_cycles_exec == s.cycles_per_exec){
+                    if (s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle) {
+                        // cout << s.rem_cycles_exec << " " << s.cycles_per_exec << endl;
+                        if (s.rem_cycles_exec == s.cycles_per_exec) {
+                            cout << "hereee";
+
                             program[s.inst_index].exec_st = cycle;
                         }
-                        if(s.rem_cycles_exec != 0)
+                        if (s.rem_cycles_exec != 0)
                             s.rem_cycles_exec--;
                     }
-                    if(s.rem_cycles_exec == 0){
+                    if (s.rem_cycles_exec == 0) {
                         execution_logic(i, s);
                         program[s.inst_index].exec_end = cycle;
                     }
@@ -221,34 +237,47 @@ private:
     }
 
     void write_back(){
-            //s.rem_cycles_exec == 0 && exec_end!= cycle
+        //s.rem_cycles_exec == 0 && exec_end!= cycle
         int write_s_id = -1;
+        int write_store_s = -1;
         int min_issue_time = INT_MAX;
-        for(int i = 0; i < NStationTypes; i++){
-            for(auto& s: stations[i]){
+        int min_store_issue_time = INT_MAX;
+        for (int i = 0; i < NStationTypes; i++) {
+            for (auto& s: stations[i]) {
                 if(s.busy && s.rem_cycles_exec == 0 && program[s.inst_index].exec_end > cycle){
                     if (i == STORE && s.qk != 0)
                         continue;
-                    if(program[s.inst_index].issue < min_issue_time){
-                        min_issue_time = program[s.inst_index].issue;
-                        write_s_id = s.id;
+                    if (program[s.inst_index].issue < min_issue_time) {
+                        if (i == STORE) {
+                            min_store_issue_time = program[s.inst_index].issue;
+                            write_store_s = s.id;
+                        } else {
+                            min_issue_time = program[s.inst_index].issue;
+                            write_s_id = s.id;
+                        }
                     }
                 }
             }
         }
         
+        if (write_store_s != -1) {
+            wb_insts++;
+
+            ReservationStation& write_s = stations[id_to_rs[write_store_s].first][id_to_rs[write_store_s].second];
+            write_s.busy = false;
+            mem[write_s.addr] = write_s.vk;
+        }
         if(write_s_id != -1){
+            wb_insts++;
+
             ReservationStation& write_s = stations[id_to_rs[write_s_id].first][id_to_rs[write_s_id].second];
             write_s.busy = false;
             int type = id_to_rs[write_s_id].first; 
-            if (type == STORE){
-                mem[write_s.addr] = write_s.vk;
-            }
-            else if (type == JUMP){
+            if (type == JUMP){
                 if(write_s.op == JAL)
                     pc = write_s.addr + program[write_s.inst_index].index + 1;
                 else
-                    pc = regs[1]; ///Not sure. Should we save this value in execution?
+                    pc = write_s.result; // RET
 
                 for (int i=0; i< NStationTypes;i++){ // flushing unneeded issued instructions
                     for(auto& s: stations[i]){
@@ -274,6 +303,8 @@ private:
                 if(write_s.result){ // The prediction is wrong, and we need to take the branch
                     pc = program[write_s.inst_index].index + 1 + write_s.addr; // Update PC
                     
+                    misprediction++;
+
                     while(!BNE_states.empty())
                         BNE_states.pop(); // empty all the states since the first BNE is taken
 
@@ -327,11 +358,9 @@ private:
                 }
             }
         }
-        
-
     }
-    void next_cycle(){
 
+    void next_cycle() {
         if (pc < program.size()) 
             issue();
         execute();
@@ -339,33 +368,152 @@ private:
         cycle++;
     }
 
-public:
-
-    Tomasulo() {
-        for (auto &reg: regs) reg = 0;
+    void read_inst_file(string inst_file) {
+        fstream f_inst(inst_file);
+        string line;
+        while (!f_inst.eof()) {
+            getline(f_inst, line);
+            Instruction inst(line, program.size());
+            program.push_back(inst);
+        }
     }
 
-    void read_hardware(string hardware_file) {
-        fstream f_hardware(hardware_file);
-        string line;
+    void read_hardware(bool is_default, string hardware_file) {
+        if (is_default) {
+            vector<vector<int>> def = {{2, 1, 1}, {2, 1, 1}, {1, 1}, {1, 1}, 
+                                       {3, 2}, {1, 2}, {1, 1}, {1, 8}}; // default settings from the project description
 
-        int rs_id = 0;
-        for (int i = 0; i < NStationTypes; i++) {
-            int n_units, exec_cycles, addr_cycles = 0;
-            getline(f_hardware, line);
-            vector<string> line_data = split_line(line);
+            int rs_id = 0;
+            for (int i = 0; i < NStationTypes; i++) {
+                int n_units, exec_cycles, addr_cycles = 0;
+                n_units = def[i][0];
+                exec_cycles = def[i][1];
+                if (i < 2) {
+                    addr_cycles = def[i][2];
+                }
 
-            n_units = stoi(line_data[0]);
-            exec_cycles = stoi(line_data[1]);
-            if (i < 2) {
-                addr_cycles = stoi(line_data[2]);
+                for (int j = 0; j < n_units; j++) {
+                    stations[i].push_back(ReservationStation(++rs_id, exec_cycles, addr_cycles));
+                    id_to_rs[rs_id] = {i, stations[i].size() - 1};
+                }
             }
+        } else {
+            fstream f_hardware(hardware_file);
+            string line;
 
-            for (int j = 0; j < n_units; j++) {
-                stations[i].push_back(ReservationStation(++rs_id, exec_cycles, addr_cycles));
-                id_to_rs[rs_id] = {i, stations[i].size() - 1};
+            int rs_id = 0;
+            for (int i = 0; i < NStationTypes; i++) {
+                int n_units, exec_cycles, addr_cycles = 0;
+                getline(f_hardware, line);
+                vector<string> line_data = split_line(line);
+
+                n_units = stoi(line_data[0]);
+                exec_cycles = stoi(line_data[1]);
+                if (i < 2) {
+                    addr_cycles = stoi(line_data[2]);
+                }
+
+                for (int j = 0; j < n_units; j++) {
+                    stations[i].push_back(ReservationStation(++rs_id, exec_cycles, addr_cycles));
+                    id_to_rs[rs_id] = {i, stations[i].size() - 1};
+                }
             }
         }
+    }
+
+    void print_reservation_stations() {
+        cout << "Current cycle: " << cycle << "\n";
+
+        cout << "Reservation stations\n";
+        cout << "Name\t\t" 
+             << "Busy\t\t"
+             << "Op\t\t"
+             << "Vj\t\t"
+             << "Vk\t\t"
+             << "Qj\t\t"
+             << "Qk\t\t"
+             << "Addr\t\t"
+             << "\n";
+
+        for (int i = 0; i < NStationTypes; i++) {
+            for (auto &s: stations[i]) {
+                cout << "\t\t"
+                     << s.busy << "\t\t"
+                     << s.op << "\t\t"
+                     << s.vj << "\t\t"
+                     << s.vk << "\t\t"
+                     << s.qj << "\t\t"
+                     << s.qk << "\t\t"
+                     << s.addr << "\t\t"
+                     << "\n";
+            }
+        }
+        cout << "--------------------------------------------------------\n"; 
+
+        cout << "Register State Table\n";
+        cout << "RegFile\n";
+
+        cout << "Register\t"
+             << "Stat\t\t\t"
+             << "Register\t"
+             << "Value\t"
+             << "\n";
+
+        for (int i = 0; i < NRegisters; i++) {
+            cout << i << "\t\t"
+                 << register_stat[i] << "\t\t\t"
+                 << i << "\t\t"
+                 << regs[i] << "\t\t"
+                 << "\n";
+        }
+
+        cout << "--------------------------------------------------------\n"; 
+    }
+
+    void print_final_instructions_details() {
+        cout << "Instruction\t\t" 
+             << "Issue\t\t"
+             << "Exec_start\t\t"
+             << "Exec_end\t\t"
+             << "Write_back\t\t"
+             << "\n";
+
+        for (auto &inst: program) {
+            cout << inst.inst << "\t\t" 
+                 << inst.issue << "\t\t"
+                 << inst.exec_st << "\t\t"
+                 << inst.exec_end << "\t\t"
+                 << inst.wb << "\t\t"
+                 << "\n";
+        }   
+        cout << "--------------------------------------------------------\n"; 
+    }
+
+    void print_calculations() {
+        double misprediction_rate = 0;
+        double IPC = wb_insts / (cycle - 1);
+        if (num_bne) misprediction_rate = (double) misprediction / num_bne;
+        
+        cout << "All instructions finished in " << cycle - 1 << " cycles\n"; // why - 1?
+        cout << "Misprediction rate = " << misprediction_rate << "\n";
+        cout << "IPC = " << IPC << "\n";
+        cout << "--------------------------------------------------------\n"; 
+    }
+
+public:
+
+    Tomasulo(string instruction_file, bool is_default_hardware, string hardware_file, bool tutorial_mode, int pc) : pc(pc), tutorial_mode(tutorial_mode) {    
+        cycle = 1;
+        for (auto &reg: regs) reg = 0;
+        for (auto &reg: register_stat) reg = 0;
+
+        // final calculations
+        num_bne = 0;
+        misprediction = 0;
+        wb_insts = 0;
+        
+        read_inst_file(instruction_file);
+        read_hardware(is_default_hardware, hardware_file); 
     }
 
     void read_mem(string mem_file) {
@@ -379,16 +527,30 @@ public:
             value = stoi(line_data[1]);
             mem[address] = value;
         }
-    }
+    }  
 
-    void read_inst_file(string inst_file) {
-        fstream f_inst(inst_file);
-        string line;
-        while (!f_inst.eof()) {
-            getline(f_inst, line);
-            Instruction inst(line, program.size());
-            program.push_back(inst);
+    void initiate_running() {
+        bool stations_busy = true;
+
+        while (stations_busy || pc < program.size()) {
+            next_cycle();
+
+            if (tutorial_mode)
+                print_reservation_stations();
+
+            stations_busy = false;
+            for (auto &station_type: stations) {
+                for (auto &s: station_type) {
+                    if (s.busy) {
+                        stations_busy = true;
+                        break;
+                    }
+                }
+            }
         }
+
+        print_final_instructions_details();
+        print_calculations();
     }
 };
 

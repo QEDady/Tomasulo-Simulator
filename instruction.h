@@ -20,14 +20,12 @@ public:
     Inst_Categ categ;
     Inst_Op op;
     int index;
+    string inst;
     // int pc;
 
-    Instruction(string _inst, int _index) {
-        string inst = _inst;
+    Instruction(string _inst, int _index) : inst(_inst), index(_index) {
         issue = exec_st = exec_end = wb = 0;
         rd = rs = rt = imm = 0;
-        index = _index;
-        // pc = _index;
         stringstream ss(_inst);
         string given_op, str;
         ss >> given_op;
@@ -60,6 +58,7 @@ public:
         }
         else if (lower(given_op) == "ret") {
             categ = JUMP;
+            rs = 1;
             op = RET;
         }
         else if (lower(given_op) == "add") {

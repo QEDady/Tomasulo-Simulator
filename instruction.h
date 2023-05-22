@@ -103,10 +103,6 @@ public:
             exit(1);
         }
     }
-
-    void flush() {
-        exec_st = exec_end = wb = 0;
-    }
 };
 
 

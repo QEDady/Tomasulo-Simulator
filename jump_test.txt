@@ -1,0 +1,10 @@
+addi r2, r0, 2
+jal 6
+add r2, r2, r2
+bne r2, r0, 10
+add r2, r2, r2
+sll r2, r2, r2
+nand r2, r2, r2
+addi r2, r2, 3
+neg r2, r2
+ret

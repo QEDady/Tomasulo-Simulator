@@ -165,7 +165,7 @@ private:
                 if(s.busy && program[s.inst_index].issue < cycle) {
                     if (!BNE_states.empty() && program[s.inst_index].issue > BNE_states.front().issue) 
                         continue;  // No execution for those after BNE until BNE writes back. 
-                    if (s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle) {
+                    if (s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle && s.rem_cycles_exec) {
                         // cout << s.rem_cycles_exec << " " << s.cycles_per_exec << endl;
                         if (s.rem_cycles_exec == s.cycles_per_exec) {
                             cout << "hereee";
@@ -174,10 +174,11 @@ private:
                         }
                         if (s.rem_cycles_exec != 0)
                             s.rem_cycles_exec--;
-                    }
-                    if (s.rem_cycles_exec == 0) {
-                        execution_logic(i, s);
-                        program[s.inst_index].exec_end = cycle;
+
+                        if (s.rem_cycles_exec == 0) {
+                            execution_logic(i, s);
+                            program[s.inst_index].exec_end = cycle;
+                        }
                     }
                 }
             }
@@ -244,7 +245,7 @@ private:
         int min_store_issue_time = INT_MAX;
         for (int i = 0; i < NStationTypes; i++) {
             for (auto& s: stations[i]) {
-                if(s.busy && s.rem_cycles_exec == 0 && program[s.inst_index].exec_end > cycle){
+                if(s.busy && s.rem_cycles_exec == 0 && program[s.inst_index].exec_end < cycle){
                     if (i == STORE && s.qk != 0)
                         continue;
                     if (program[s.inst_index].issue < min_issue_time) {
@@ -473,8 +474,8 @@ private:
     void print_final_instructions_details() {
         cout << "Instruction\t\t" 
              << "Issue\t\t"
-             << "Exec_start\t\t"
-             << "Exec_end\t\t"
+             << "Exec_start\t"
+             << "Exec_end\t"
              << "Write_back\t\t"
              << "\n";
 
@@ -491,10 +492,10 @@ private:
 
     void print_calculations() {
         double misprediction_rate = 0;
-        double IPC = wb_insts / (cycle - 1);
+        double IPC = (double) wb_insts / (cycle - 1);  
         if (num_bne) misprediction_rate = (double) misprediction / num_bne;
         
-        cout << "All instructions finished in " << cycle - 1 << " cycles\n"; // why - 1?
+        cout << "All instructions finished in " << cycle - 1 << " cycles\n"; 
         cout << "Misprediction rate = " << misprediction_rate << "\n";
         cout << "IPC = " << IPC << "\n";
         cout << "--------------------------------------------------------\n"; 
@@ -534,6 +535,8 @@ public:
 
         while (stations_busy || pc < program.size()) {
             next_cycle();
+
+            if (cycle > 7) break;
 
             if (tutorial_mode)
                 print_reservation_stations();

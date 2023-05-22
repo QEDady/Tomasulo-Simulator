@@ -7,6 +7,7 @@
 
 struct ReservationStation {
     int id; //Starting from 1
+    string name;
     bool busy;
     Inst_Op op;
     int vj, vk;
@@ -21,8 +22,8 @@ struct ReservationStation {
     int inst_index; //instruction index in the current queue
     int result;
 
-    ReservationStation(int id, int cycles_per_exec, int cycles_per_addr) {
-        this->id = id;
+    ReservationStation(string name, int id, int cycles_per_exec, int cycles_per_addr) : name(name), id(id) {
+        // this->id = id;
         busy = 0;
         vj = vk = addr = 0;
         qj = qk = 0;
@@ -48,7 +49,10 @@ vector<string> split_line(string line, char delimiter = ' ') {
     string cur_word = "";
     for (auto &u : line) {
         if (u == delimiter) {
-            if (cur_word.length()) words.push_back(cur_word);
+            if (cur_word.length()){ 
+                words.push_back(cur_word);
+                cur_word = "";
+            }
         } else cur_word += u;
     }
     if (cur_word.length()) words.push_back(cur_word);
@@ -57,7 +61,7 @@ vector<string> split_line(string line, char delimiter = ' ') {
 
 class Tomasulo {
 private:
-    short int mem[1 << 16]; // word addressable with word size of 16 bits
+    short int mem[1 << 16] = {}; // word addressable with word size of 16 bits
     short int regs[NRegisters];
     vector<Instruction> program;
   ///  deque<Instruction> running_instructions;
@@ -82,9 +86,6 @@ private:
                 s.busy = 1;
                 s.addr = program[pc].imm;
                 s.op = program[pc].op;
-                cout << s.cycles_per_addr << endl;
-                cout << s.cycles_per_exec << endl;
-
                 s.rem_cycles_addr = s.cycles_per_addr;
                 s.rem_cycles_exec = s.cycles_per_exec;
                 
@@ -114,8 +115,10 @@ private:
                     load_store_queue.push_back(pc);
                 
                 if(program[pc].categ == BNE){
-                    BNE_states.push(SystemState(cycle, register_stat));
-                    num_bne++; 
+                    if(BNE_states.empty())
+                        BNE_states.push(SystemState(cycle, register_stat));
+                    else
+                        BNE_states.push(SystemState(cycle, BNE_states.back().register_stat));
                 }
                // running_instructions.push_back(&program[pc]);
                 pc += 1;
@@ -166,10 +169,7 @@ private:
                     if (!BNE_states.empty() && program[s.inst_index].issue > BNE_states.front().issue) 
                         continue;  // No execution for those after BNE until BNE writes back. 
                     if (s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle && s.rem_cycles_exec) {
-                        // cout << s.rem_cycles_exec << " " << s.cycles_per_exec << endl;
                         if (s.rem_cycles_exec == s.cycles_per_exec) {
-                            cout << "hereee";
-
                             program[s.inst_index].exec_st = cycle;
                         }
                         if (s.rem_cycles_exec != 0)
@@ -197,17 +197,17 @@ private:
                                 program[s.inst_index].exec_st = cycle;
                             if (s.rem_cycles_addr != 0) 
                                 s.rem_cycles_addr--;
+                             if (s.rem_cycles_addr == 0) {
+                                s.result = s.addr + s.vj;
+                                queue_pop = true;
+                            }
                         }
-
-                        if (s.rem_cycles_addr == 0) {
-                            s.result = s.addr + s.vj;
-                            queue_pop = true;
-                        }
+                       
                     } else if (s.rem_cycles_exec){
                         bool AW, WAR; // Handling Memorry Hazards
                         AW = WAR = false;
                         //After Write Hazard
-                        for (auto &store_s : stations[1]) 
+                        for (auto &store_s : stations[STORE]) 
                             if (store_s.busy && program[store_s.inst_index].wb == 0 
                                 && program[store_s.inst_index].issue < program[s.inst_index].issue && store_s.addr == s.addr) {
                                 AW = true;
@@ -215,7 +215,7 @@ private:
                             }
 
                         if (i == 1) { // WAR hazard 
-                            for (auto &load_s : stations[0]) 
+                            for (auto &load_s : stations[LOAD]) 
                                 if (load_s.busy && load_s.rem_cycles_exec != 0 
                                     && program[load_s.inst_index].issue < program[s.inst_index].issue && load_s.addr == s.addr) {
                                     WAR = true;
@@ -240,7 +240,7 @@ private:
     void write_back(){
         //s.rem_cycles_exec == 0 && exec_end!= cycle
         int write_s_id = -1;
-        int write_store_s = -1;
+        int write_store_id = -1;
         int min_issue_time = INT_MAX;
         int min_store_issue_time = INT_MAX;
         for (int i = 0; i < NStationTypes; i++) {
@@ -251,7 +251,7 @@ private:
                     if (program[s.inst_index].issue < min_issue_time) {
                         if (i == STORE) {
                             min_store_issue_time = program[s.inst_index].issue;
-                            write_store_s = s.id;
+                            write_store_id = s.id;
                         } else {
                             min_issue_time = program[s.inst_index].issue;
                             write_s_id = s.id;
@@ -260,12 +260,13 @@ private:
                 }
             }
         }
-        
-        if (write_store_s != -1) {
+
+        if (write_store_id != -1) {
             wb_insts++;
 
-            ReservationStation& write_s = stations[id_to_rs[write_store_s].first][id_to_rs[write_store_s].second];
+            ReservationStation& write_s = stations[id_to_rs[write_store_id].first][id_to_rs[write_store_id].second];
             write_s.busy = false;
+            program[write_s.inst_index].wb = cycle;
             mem[write_s.addr] = write_s.vk;
         }
         if(write_s_id != -1){
@@ -273,6 +274,7 @@ private:
 
             ReservationStation& write_s = stations[id_to_rs[write_s_id].first][id_to_rs[write_s_id].second];
             write_s.busy = false;
+            program[write_s.inst_index].wb = cycle;
             int type = id_to_rs[write_s_id].first; 
             if (type == JUMP){
                 if(write_s.op == JAL)
@@ -301,6 +303,7 @@ private:
                 }
             }
             else if (type == BNE){
+                num_bne++;
                 if(write_s.result){ // The prediction is wrong, and we need to take the branch
                     pc = program[write_s.inst_index].index + 1 + write_s.addr; // Update PC
                     
@@ -347,7 +350,7 @@ private:
                 
                 for (int i = 0; i< NStationTypes; i++){
                     for (auto& s: stations[i]){
-                        if(s.qj = write_s_id){
+                        if(s.qj == write_s_id){
                             s.vj = write_s.result;
                             s.qj = 0;
                         }
@@ -380,10 +383,12 @@ private:
     }
 
     void read_hardware(bool is_default, string hardware_file) {
+        vector<string> st = {"load", "store", "bne", "jump", "add", "neg", "nand", "sll"};
+
         if (is_default) {
             vector<vector<int>> def = {{2, 1, 1}, {2, 1, 1}, {1, 1}, {1, 1}, 
                                        {3, 2}, {1, 2}, {1, 1}, {1, 8}}; // default settings from the project description
-
+            
             int rs_id = 0;
             for (int i = 0; i < NStationTypes; i++) {
                 int n_units, exec_cycles, addr_cycles = 0;
@@ -394,7 +399,8 @@ private:
                 }
 
                 for (int j = 0; j < n_units; j++) {
-                    stations[i].push_back(ReservationStation(++rs_id, exec_cycles, addr_cycles));
+                    string name = st[i] + (n_units > 1 ? to_string(j + 1) : "");
+                    stations[i].push_back(ReservationStation(name, ++rs_id, exec_cycles, addr_cycles));
                     id_to_rs[rs_id] = {i, stations[i].size() - 1};
                 }
             }
@@ -415,7 +421,8 @@ private:
                 }
 
                 for (int j = 0; j < n_units; j++) {
-                    stations[i].push_back(ReservationStation(++rs_id, exec_cycles, addr_cycles));
+                    string name = st[i] + (n_units > 1 ? to_string(j + 1) : "");
+                    stations[i].push_back(ReservationStation(name, ++rs_id, exec_cycles, addr_cycles));
                     id_to_rs[rs_id] = {i, stations[i].size() - 1};
                 }
             }
@@ -423,7 +430,7 @@ private:
     }
 
     void print_reservation_stations() {
-        cout << "Current cycle: " << cycle << "\n";
+        cout << "Current cycle: " << cycle - 1 << "\n";
 
         cout << "Reservation stations\n";
         cout << "Name\t\t" 
@@ -438,20 +445,26 @@ private:
 
         for (int i = 0; i < NStationTypes; i++) {
             for (auto &s: stations[i]) {
-                cout << "\t\t"
-                     << s.busy << "\t\t"
-                     << s.op << "\t\t"
-                     << s.vj << "\t\t"
-                     << s.vk << "\t\t"
-                     << s.qj << "\t\t"
-                     << s.qk << "\t\t"
-                     << s.addr << "\t\t"
-                     << "\n";
+                if (s.busy) {
+                    cout << s.name << "\t\t"
+                        << s.busy << "\t\t"
+                        << program[s.inst_index].op_str << "\t\t"
+                        << s.vj << "\t\t"
+                        << s.vk << "\t\t"
+                        << s.qj << "\t\t"
+                        << s.qk << "\t\t"
+                        << s.addr << "\t\t"
+                        << "\n";
+                } else {
+                    cout << s.name << "\t\t"
+                        << s.busy << "\t\t"
+                        << "\n";
+                }
             }
         }
         cout << "--------------------------------------------------------\n"; 
 
-        cout << "Register State Table\n";
+        cout << "Register State Table\t\t\t";
         cout << "RegFile\n";
 
         cout << "Register\t"
@@ -535,8 +548,6 @@ public:
 
         while (stations_busy || pc < program.size()) {
             next_cycle();
-
-            if (cycle > 7) break;
 
             if (tutorial_mode)
                 print_reservation_stations();

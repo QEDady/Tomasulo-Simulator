@@ -21,7 +21,7 @@ public:
     Inst_Op op;
     int index;
     string inst;
-    // int pc;
+    string op_str ="";
 
     Instruction(string _inst, int _index) : inst(_inst), index(_index) {
         issue = exec_st = exec_end = wb = 0;
@@ -29,6 +29,7 @@ public:
         stringstream ss(_inst);
         string given_op, str;
         ss >> given_op;
+        op_str = given_op;
 
         if (lower(given_op) == "load") {
             categ = LOAD;
@@ -97,7 +98,7 @@ public:
             exit(1);
         }
 
-        if (imm < -64 || imm > 36) {
+        if (imm < -64 || imm > 63) {
             cout << "The program will terminate due to invalid input";
             exit(1);
         }

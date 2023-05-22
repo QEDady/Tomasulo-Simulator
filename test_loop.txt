@@ -1,0 +1,6 @@
+ADDI r1, r0, 1
+ADDI r2, r0, 5
+ADDI r3, r3, 2
+ADDI r5, r5, 1
+BNE r5, r2, -3
+ADDI r6, r0, 6

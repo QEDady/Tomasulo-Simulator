@@ -27,7 +27,7 @@ struct ReservationStation {
         busy = 0;
         vj = vk = addr = 0;
         qj = qk = 0;
-        this->cycles_per_exec = cycles_per_exec;
+        this->cycles_per_exec = cycles_per_exec;    
         this->cycles_per_addr = cycles_per_addr;
     }
 };

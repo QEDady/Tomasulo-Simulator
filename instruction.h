@@ -105,7 +105,7 @@ public:
     }
 
     void flush() {
-        issue = exec_st = exec_end = wb = 0;
+        exec_st = exec_end = wb = 0;
     }
 };
 

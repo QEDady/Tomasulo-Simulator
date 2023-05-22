@@ -34,7 +34,7 @@ int main() {
           cin >> hardware_file;
      }
 
-     Tomasulo tomasulo(instruction_file, (tolower(cust_hardware) == 'n'), hardware_file, (tolower('t') == 't'), 0);
+     Tomasulo tomasulo(instruction_file, (tolower(cust_hardware) == 'n'), hardware_file, (tolower(mode) == 't'), 0);
      
      cout << "Now, do you want to initize the memory for you program (Y, N) ";
      cin >> mem_init;

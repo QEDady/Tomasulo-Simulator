@@ -69,7 +69,7 @@ private:
     map<int, pair<int, int>> id_to_rs; // absolute station id to its location in the 2d array stations 
     int register_stat[NRegisters]; // register to it's waiting station  
     deque<int> load_store_queue; // indices of load_store instructions issue
-    queue<SystemState> BNE_states; //Saving system states before knowing BNE
+    queue<SystemState> system_states; //Saving system states before knowing BNE or Jumping
     int pc = 0; 
     int cycle;
     bool tutorial_mode;
@@ -106,19 +106,19 @@ private:
                 }
 
                 if (program[pc].rd != 0) {
-                    if(BNE_states.empty())
+                    if(system_states.empty())
                         register_stat[program[pc].rd] = s.id;
                     else
-                        BNE_states.back().register_stat[program[pc].rd] = s.id;
+                        system_states.back().register_stat[program[pc].rd] = s.id;
                 }
                 if (program[pc].categ == LOAD || program[pc].categ == STORE) 
                     load_store_queue.push_back(pc);
                 
-                if(program[pc].categ == BNE){
-                    if(BNE_states.empty())
-                        BNE_states.push(SystemState(cycle, register_stat));
+                if(program[pc].categ == BNE || program[pc].categ == JUMP){
+                    if(system_states.empty())
+                        system_states.push(SystemState(cycle, register_stat));
                     else
-                        BNE_states.push(SystemState(cycle, BNE_states.back().register_stat));
+                        system_states.push(SystemState(cycle, system_states.back().register_stat));
                 }
                // running_instructions.push_back(&program[pc]);
                 pc += 1;
@@ -166,7 +166,7 @@ private:
         for(int i = 2; i < NStationTypes; i++) {
             for (auto &s: stations[i]){
                 if(s.busy && program[s.inst_index].issue < cycle) {
-                    if (!BNE_states.empty() && program[s.inst_index].issue > BNE_states.front().issue) 
+                    if (!system_states.empty() && program[s.inst_index].issue > system_states.front().issue) 
                         continue;  // No execution for those after BNE until BNE writes back. 
                     if (s.qj == 0 && s.qk == 0 && program[s.inst_index].issue < cycle && s.rem_cycles_exec) {
                         if (s.rem_cycles_exec == s.cycles_per_exec) {
@@ -189,7 +189,7 @@ private:
         for (int i = 0; i < 2; i++) {
             for (auto &s: stations[i]) {
                 if (s.busy && program[s.inst_index].issue < cycle) {
-                    if (!BNE_states.empty() && program[s.inst_index].issue > BNE_states.front().issue) 
+                    if (!system_states.empty() && program[s.inst_index].issue > system_states.front().issue) 
                         continue;  // No execution for those after BNE until BNE writes back. 
                     if (s.rem_cycles_addr) {
                         if (s.qj == 0 && load_store_queue.size() && load_store_queue.front() == s.inst_index) {
@@ -281,11 +281,13 @@ private:
                     pc = write_s.addr + program[write_s.inst_index].index + 1;
                 else
                     pc = write_s.result; // RET
-
+                
+                while(!system_states.empty())
+                    system_states.pop(); // empty all the states since the jump is done
+                    
                 for (int i=0; i< NStationTypes;i++){ // flushing unneeded issued instructions
                     for(auto& s: stations[i]){
                         if(s.busy && program[s.inst_index].issue > program[write_s.inst_index].issue){
-                            program[s.inst_index].flush();
                             s.busy = 0;
                             for (int j = 0; j < NRegisters; j++){
                                 if(register_stat[j] == s.id)
@@ -309,13 +311,12 @@ private:
                     
                     misprediction++;
 
-                    while(!BNE_states.empty())
-                        BNE_states.pop(); // empty all the states since the first BNE is taken
+                    while(!system_states.empty())
+                        system_states.pop(); // empty all the states since the first BNE is taken
 
                     for (int i=0; i< NStationTypes;i++){ // flushing unneeded issued instructions
                         for(auto& s: stations[i]){
                             if(s.busy && program[s.inst_index].issue > program[write_s.inst_index].issue){
-                                program[s.inst_index].flush();
                                 s.busy = 0;
                                 for (int j = 0; j < NRegisters; j++){
                                     if(register_stat[j] == s.id)
@@ -334,9 +335,9 @@ private:
                 }
                 else{// Prediction is right, we update the actual system state with the buffered one.
                     for (int i=0; i < 8 ;i++){
-                        register_stat[i] = BNE_states.front().register_stat[i];
+                        register_stat[i] = system_states.front().register_stat[i];
                     }
-                    BNE_states.pop();
+                    system_states.pop();
                 }
             }
 
@@ -548,9 +549,10 @@ public:
 
         while (stations_busy || pc < program.size()) {
             next_cycle();
-
-            if (tutorial_mode)
+               
+            if (tutorial_mode){
                 print_reservation_stations();
+            }
 
             stations_busy = false;
             for (auto &station_type: stations) {
